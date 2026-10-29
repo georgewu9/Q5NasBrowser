@@ -8,6 +8,9 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      ANDROID_HOME: ${{ github.workspace }}/android-sdk
+      ANDROID_SDK_ROOT: ${{ github.workspace }}/android-sdk
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -18,19 +21,25 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install SDK packages & accept licenses
+      - name: Install Android cmdline-tools + SDK platform/build-tools
         run: |
-          sdkmanager "platforms;android-34" "build-tools;34.0.0"
+          echo "JAVA_HOME=$JAVA_HOME"
+          mkdir -p "$ANDROID_HOME/cmdline-tools"
+          curl -L -o /tmp/cmdtools.zip "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
+          mkdir -p /tmp/cmdtools_extract
+          unzip -q /tmp/cmdtools.zip -d /tmp/cmdtools_extract
+          mkdir -p "$ANDROID_HOME/cmdline-tools/latest"
+          cp -r /tmp/cmdtools_extract/cmdline-tools/* "$ANDROID_HOME/cmdline-tools/latest/"
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+          sdkmanager --version
           yes | sdkmanager --licenses
+          sdkmanager "platforms;android-34" "build-tools;34.0.0"
 
-      - name: Install Gradle
+      - name: Install Gradle 8.4
         run: |
-          curl -L -o gradle.zip https://services.gradle.org/distributions/gradle-8.4-bin.zip
-          unzip -q gradle.zip
-          echo "$PWD/gradle-8.4/bin" >> $GITHUB_PATH
+          curl -L -o /tmp/gradle.zip "https://services.gradle.org/distributions/gradle-8.4-bin.zip"
+          unzip -q /tmp/gradle.zip -d /tmp
+          echo "/tmp/gradle-8.4/bin" >> "$GITHUB_PATH"
 
       - name: Build Debug APK
         run: gradle assembleDebug

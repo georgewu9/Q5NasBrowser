@@ -23,8 +23,8 @@ fi
 
 echo ">> 当前提交:"
 git log --oneline -1
-echo ">> 推送到 origin/main ..."
-git push -u origin main
+echo ">> 强制推送到 origin/main（覆盖之前误推错的目录结构） ..."
+git push --force -u origin main
 
 echo
 echo "✅ 推送成功！现在去 GitHub 仓库的 Actions 页，"
