@@ -21,7 +21,8 @@ class ProxyServer(
     override fun serve(session: IHTTPSession): Response {
         val rangeHeader = session.headers["range"]
         val total = SmbBrowser.length(ctx, host, path)
-        val mime = guessMime(path)
+        // 音视频共用的 MIME 表，保证播放器能正确识别 flac/wav/mkv 等格式
+        val mime = MediaType.mimeOf(path)
 
         var start = 0L
         var end = if (total > 0) total - 1 else 0L
@@ -58,23 +59,6 @@ class ProxyServer(
             val skipped = stream.skip(remaining)
             if (skipped <= 0) break
             remaining -= skipped
-        }
-    }
-
-    private fun guessMime(p: String): String {
-        val lower = p.lowercase()
-        return when {
-            lower.endsWith(".mkv") -> "video/x-matroska"
-            lower.endsWith(".mp4") -> "video/mp4"
-            lower.endsWith(".ts") -> "video/mp2t"
-            lower.endsWith(".m2ts") -> "video/mp2t"
-            lower.endsWith(".avi") -> "video/x-msvideo"
-            lower.endsWith(".mov") -> "video/quicktime"
-            lower.endsWith(".m4v") -> "video/mp4"
-            lower.endsWith(".flv") -> "video/x-flv"
-            lower.endsWith(".wmv") -> "video/x-ms-wmv"
-            lower.endsWith(".mp3") -> "audio/mpeg"
-            else -> "application/octet-stream"
         }
     }
 }

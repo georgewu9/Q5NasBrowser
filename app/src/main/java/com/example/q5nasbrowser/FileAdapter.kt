@@ -32,7 +32,15 @@ class FileAdapter(
 
     override fun onBindViewHolder(holder: VH, position: Int) {
         val item = items[position]
-        val prefix = if (item.isDirectory) "📁 " else "🎬 "
+        val prefix = when {
+            item.isDirectory -> "📁 "
+            else -> when (MediaType.kindOf(item.path)) {
+                MediaType.Kind.VIDEO -> "🎬 "
+                MediaType.Kind.AUDIO -> "🎵 "
+                MediaType.Kind.IMAGE -> "🖼 "
+                MediaType.Kind.OTHER -> "📄 "
+            }
+        }
         holder.view.text = prefix + item.name
         val ctx = holder.view.context
         holder.view.background = if (position == selectedPosition)

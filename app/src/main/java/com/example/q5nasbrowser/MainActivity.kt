@@ -1,5 +1,6 @@
 package com.example.q5nasbrowser
 
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -8,6 +9,7 @@ import android.view.View
 import android.widget.Button
 import android.widget.ProgressBar
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -17,6 +19,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
 import java.net.ServerSocket
 
 class MainActivity : AppCompatActivity() {
@@ -148,24 +152,112 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** 点击文件：按媒体类型分流到视频/音频（HTTP 代理）或图片（下载后本地打开）。 */
     private fun playFile(host: String, path: String) {
+        when (MediaType.kindOf(path)) {
+            MediaType.Kind.VIDEO -> streamAndOpen(host, path, MediaType.Kind.VIDEO)
+            MediaType.Kind.AUDIO -> streamAndOpen(host, path, MediaType.Kind.AUDIO)
+            MediaType.Kind.IMAGE -> openImage(host, path)
+            MediaType.Kind.OTHER -> {
+                val name = path.substringAfterLast('/')
+                statusText.text = "不支持的类型：$name"
+                Toast.makeText(this, "不是可播放的音视频或图片：$name", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    /** 视频/音频：走本地 HTTP 代理，支持 Range 拖动进度。 */
+    private fun streamAndOpen(host: String, path: String, kind: MediaType.Kind) {
         val (user, pass) = SmbConfig.load(this)
+        val mime = MediaType.mimeOf(path)
+        statusText.text = "正在准备：${path.substringAfterLast('/')}"
         scope.launch {
             try {
                 val ctx = withContext(Dispatchers.IO) { SmbConfig.buildContext(user, pass) }
                 proxy?.stop()
                 val port = findFreePort()
                 proxy = ProxyServer(port, ctx, host, path).apply { start() }
-                // URL 保留真实文件名后缀（如 .mkv），便于播放器识别格式/选解码器；
+                // URL 保留真实文件名后缀（如 .mkv/.flac），便于播放器识别格式/选解码器；
                 // 真正读取由代理按内部保存的 path 完成，request URI 本身不参与查找
                 val uri = Uri.parse("http://127.0.0.1:$port/$path")
-                val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-                    setDataAndType(uri, "video/*")
-                }
-                startActivity(Intent.createChooser(intent, "选择播放器播放"))
+                val intent = Intent(Intent.ACTION_VIEW).apply { setDataAndType(uri, mime) }
+                val title = if (kind == MediaType.Kind.AUDIO) "选择音乐播放器" else "选择播放器播放"
+                launchExternal(intent, title)
             } catch (e: Exception) {
                 statusText.text = "播放失败：${e.message}"
             }
+        }
+    }
+
+    /**
+     * 图片：看图软件普遍不支持 http 流，先下载到应用外部缓存目录，再用 file:// 打开。
+     *
+     * - API 22 上 targetSdk 也是 22，file:// 不受 FileUriExposed 限制，无需 FileProvider。
+     * - 用 getExternalCacheDir() 而非内部 cacheDir：内部目录属于本应用 uid，
+     *   其它看图软件读不到；外部缓存目录在 Android 11 之前任何应用都可读，且写入不需要权限。
+     */
+    private fun openImage(host: String, path: String) {
+        val (user, pass) = SmbConfig.load(this)
+        val name = path.substringAfterLast('/')
+        val mime = MediaType.mimeOf(path)
+        statusText.text = "正在加载图片：$name"
+        progress.visibility = View.VISIBLE
+        scope.launch {
+            try {
+                val file = withContext(Dispatchers.IO) {
+                    val ctx = SmbConfig.buildContext(user, pass)
+                    val dir = imageCacheDir()
+                    pruneImageCache(dir)
+                    // 文件名里的空格/特殊字符会让部分看图软件解析失败，统一替换
+                    val safe = name.replace(Regex("[^0-9A-Za-z.\\-\\u4e00-\\u9fa5]"), "_")
+                    val outFile = File(dir, safe)
+                    SmbBrowser.openStream(ctx, host, path).use { input ->
+                        FileOutputStream(outFile).use { os -> input.copyTo(os, 64 * 1024) }
+                    }
+                    outFile
+                }
+                progress.visibility = View.GONE
+                statusText.text = path
+                val uri = Uri.fromFile(file)
+                val intent = Intent(Intent.ACTION_VIEW).apply { setDataAndType(uri, mime) }
+                launchExternal(intent, "选择看图软件")
+            } catch (e: Exception) {
+                progress.visibility = View.GONE
+                statusText.text = "图片加载失败：${e.message}"
+            }
+        }
+    }
+
+    /** 图片缓存目录：优先外部缓存（其它应用可读），拿不到时退回内部缓存。 */
+    private fun imageCacheDir(): File {
+        val base = getExternalCacheDir() ?: cacheDir
+        return File(base, "preview").apply { mkdirs() }
+    }
+
+    /** 简单清理：删除 7 天前的图片缓存，避免长期占用空间。 */
+    private fun pruneImageCache(dir: File) {
+        val cutoff = System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000
+        dir.listFiles()?.forEach { f ->
+            if (f.isFile && f.lastModified() < cutoff) f.delete()
+        }
+    }
+
+    /**
+     * 统一的外部跳转兜底。
+     * 电视盒可能没装能打开该类型的应用，createChooser 本身不会抛异常（只会显示空列表），
+     * 所以先 resolveActivity 判断，再弹选择器。
+     */
+    private fun launchExternal(intent: Intent, title: String) {
+        if (intent.resolveActivity(packageManager) == null) {
+            Toast.makeText(this, "本机没有可打开该类型文件的应用", Toast.LENGTH_LONG).show()
+            statusText.text = "本机没有可打开该类型文件的应用（可能未装看图/音乐软件）"
+            return
+        }
+        try {
+            startActivity(Intent.createChooser(intent, title))
+        } catch (e: ActivityNotFoundException) {
+            Toast.makeText(this, "本机没有可打开该类型文件的应用", Toast.LENGTH_LONG).show()
+            statusText.text = "本机没有可打开该类型文件的应用"
         }
     }
 
