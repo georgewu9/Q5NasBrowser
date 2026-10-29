@@ -45,18 +45,14 @@ object LanScanner {
         val tasks = (1..254).map { i ->
             val ip = base + i
             Callable {
-                for (p in ports) {
+                // 用 any{} 探测任一端口开放，避免使用 break（Kotlin 1.9 对 inline lambda 中的非局部 break 仍属实验特性）
+                val ok = ports.any { p ->
                     try {
-                        Socket().use { s ->
-                            s.connect(InetSocketAddress(ip, p), timeoutMs)
-                            synchronized(lock) {
-                                if (found.none { it.ip == ip }) found.add(Host(ip, null))
-                            }
-                            break
-                        }
-                    } catch (_: Exception) {
-                        // 端口不通，忽略
-                    }
+                        Socket().use { s -> s.connect(InetSocketAddress(ip, p), timeoutMs); true }
+                    } catch (_: Exception) { false }
+                }
+                if (ok) synchronized(lock) {
+                    if (found.none { it.ip == ip }) found.add(Host(ip, null))
                 }
             }
         }

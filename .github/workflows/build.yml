@@ -46,20 +46,12 @@ jobs:
           set -o pipefail
           gradle assembleDebug --stacktrace 2>&1 | tee build.log
 
-      - name: Publish build error as commit comment
+      - name: Upload build log (on failure)
         if: failure()
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_SHA: ${{ github.sha }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          LOG=$(grep -iE "error:|e: |FAILURE|What went wrong|Exception in|Could not resolve|unresolved reference|w: |Task :app" build.log | head -150)
-          BODY=$(python3 -c "import sys,json; log=sys.stdin.read(); print(json.dumps('**Build error (auto-published):**\n\n\`\`\`\n'+log+'\n\`\`\`'))" <<< "$LOG")
-          curl -s -X POST \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/$GH_REPO/commits/$GH_SHA/comments" \
-            -d "{\"body\":$BODY}"
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
 
       - name: Upload APK
         if: success()
