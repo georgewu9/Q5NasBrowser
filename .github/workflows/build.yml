@@ -35,11 +35,11 @@ jobs:
           yes | sdkmanager --licenses
           sdkmanager "platforms;android-34" "build-tools;34.0.0"
 
-      - name: Install Gradle 8.4
+      - name: Install Gradle 8.9 (AGP 8.4 requires Gradle >= 8.6)
         run: |
-          curl -L -o /tmp/gradle.zip "https://services.gradle.org/distributions/gradle-8.4-bin.zip"
+          curl -L -o /tmp/gradle.zip "https://services.gradle.org/distributions/gradle-8.9-bin.zip"
           unzip -q /tmp/gradle.zip -d /tmp
-          echo "/tmp/gradle-8.4/bin" >> "$GITHUB_PATH"
+          echo "/tmp/gradle-8.9/bin" >> "$GITHUB_PATH"
 
       - name: Build Debug APK
         run: |
