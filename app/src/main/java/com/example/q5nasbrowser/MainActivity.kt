@@ -40,6 +40,12 @@ class MainActivity : AppCompatActivity() {
     private var proxy: ProxyServer? = null
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
+    // 遥控方向键导航状态
+    private var selectedIndex = 0
+    private var currentAdapter: FileAdapter? = null
+    private var currentOnItem: ((FileItem) -> Unit)? = null
+    private var currentItems: List<FileItem> = emptyList()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -62,7 +68,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun render(items: List<FileItem>, onItem: (FileItem) -> Unit) {
-        recycler.adapter = FileAdapter(items, onItem)
+        currentItems = items
+        currentOnItem = onItem
+        selectedIndex = 0
+        val adapter = FileAdapter(items, onItem)
+        currentAdapter = adapter
+        recycler.adapter = adapter
+        if (items.isNotEmpty()) {
+            recycler.scrollToPosition(0)
+            recycler.requestFocus()
+        }
     }
 
     private fun startScan() {
@@ -161,24 +176,56 @@ class MainActivity : AppCompatActivity() {
         return p
     }
 
+    /** 返回上一层（遥控 LEFT 键与 BACK 键共用）。 */
+    private fun goBack() {
+        if (stack.size <= 1) return
+        stack.removeAt(stack.size - 1)
+        val prev = stack.last()
+        statusText.text = when (prev.kind) {
+            Kind.ROOT -> "发现 ${prev.items.size} 台设备，点击进入"
+            Kind.SHARES -> "${prev.host} - 选择共享目录"
+            Kind.FILES -> prev.path
+        }
+        val cb: (FileItem) -> Unit = when (prev.kind) {
+            Kind.ROOT -> { it -> openHost(it.host) }
+            Kind.SHARES -> { it -> openPath(prev.host, it.path) }
+            Kind.FILES -> { it ->
+                if (it.isDirectory) openPath(prev.host, it.path) else playFile(prev.host, it.path)
+            }
+        }
+        render(prev.items, cb)
+    }
+
+    /** 上下移动选中项，并滚动使目标可见（一屏显示不下时实现翻屏）。 */
+    private fun moveSelection(delta: Int) {
+        if (currentItems.isEmpty()) return
+        val next = (selectedIndex + delta).coerceIn(0, currentItems.size - 1)
+        if (next == selectedIndex) return
+        selectedIndex = next
+        currentAdapter?.setSelected(selectedIndex)
+        recycler.scrollToPosition(selectedIndex)
+    }
+
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        // 正在浏览列表时，方向键由本 Activity 接管，保证光标移动/翻屏可控
+        if (stack.isNotEmpty()) {
+            when (keyCode) {
+                KeyEvent.KEYCODE_DPAD_DOWN -> { moveSelection(1); return true }
+                KeyEvent.KEYCODE_DPAD_UP -> { moveSelection(-1); return true }
+                KeyEvent.KEYCODE_DPAD_CENTER,
+                KeyEvent.KEYCODE_ENTER -> {
+                    currentItems.getOrNull(selectedIndex)?.let { currentOnItem?.invoke(it) }
+                    return true
+                }
+                KeyEvent.KEYCODE_DPAD_LEFT -> {
+                    goBack()
+                    return true
+                }
+            }
+        }
         if (keyCode == KeyEvent.KEYCODE_BACK) {
             if (stack.size > 1) {
-                stack.removeAt(stack.size - 1)
-                val prev = stack.last()
-                statusText.text = when (prev.kind) {
-                    Kind.ROOT -> "发现 ${prev.items.size} 台设备，点击进入"
-                    Kind.SHARES -> "${prev.host} - 选择共享目录"
-                    Kind.FILES -> prev.path
-                }
-                val cb: (FileItem) -> Unit = when (prev.kind) {
-                    Kind.ROOT -> { it -> openHost(it.host) }
-                    Kind.SHARES -> { it -> openPath(prev.host, it.path) }
-                    Kind.FILES -> { it ->
-                        if (it.isDirectory) openPath(prev.host, it.path) else playFile(prev.host, it.path)
-                    }
-                }
-                render(prev.items, cb)
+                goBack()
                 return true
             }
         }
